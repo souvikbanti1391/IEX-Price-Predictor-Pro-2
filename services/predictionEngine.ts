@@ -106,11 +106,17 @@ const calculateArbitrageOpportunities = (forecasts: FutureForecast[]): Arbitrage
                     currentWindow.avgPrice = (currentWindow.avgPrice || 0) + f.price;
                 } else {
                     // Switch type (close current, start new)
-                    // Finalize average
-                    const duration = dayForecasts.findIndex(df => df.timeBlock === currentWindow?.endTime) - dayForecasts.findIndex(df => df.timeBlock === currentWindow?.startTime) + 1;
+                    // We must capture the current window before overwriting it
+                    const closingWindow = currentWindow;
+                    const startIdx = dayForecasts.findIndex(df => df.timeBlock === closingWindow.startTime);
+                    const endIdx = dayForecasts.findIndex(df => df.timeBlock === closingWindow.endTime);
+                    const duration = Math.max(1, endIdx - startIdx + 1);
+
                     windows.push({
-                        ...currentWindow as ArbitrageWindow,
-                        avgPrice: (currentWindow.avgPrice || 0) / duration
+                        startTime: closingWindow.startTime!,
+                        endTime: closingWindow.endTime!,
+                        type: closingWindow.type!,
+                        avgPrice: (closingWindow.avgPrice || 0) / duration
                     });
 
                     currentWindow = {
@@ -122,29 +128,35 @@ const calculateArbitrageOpportunities = (forecasts: FutureForecast[]): Arbitrage
                 }
             } else {
                 if (currentWindow) {
-                    // Close window
-                    const startIdx = dayForecasts.findIndex(df => df.timeBlock === currentWindow?.startTime);
-                    const endIdx = dayForecasts.findIndex(df => df.timeBlock === currentWindow?.endTime);
-                    const duration = endIdx - startIdx + 1;
+                    // Close window if we exit the threshold zone
+                    const closingWindow = currentWindow;
+                    const startIdx = dayForecasts.findIndex(df => df.timeBlock === closingWindow.startTime);
+                    const endIdx = dayForecasts.findIndex(df => df.timeBlock === closingWindow.endTime);
+                    const duration = Math.max(1, endIdx - startIdx + 1);
                     
                     windows.push({
-                        ...currentWindow as ArbitrageWindow,
-                        avgPrice: (currentWindow.avgPrice || 0) / duration
+                        startTime: closingWindow.startTime!,
+                        endTime: closingWindow.endTime!,
+                        type: closingWindow.type!,
+                        avgPrice: (closingWindow.avgPrice || 0) / duration
                     });
                     currentWindow = null;
                 }
             }
         });
 
-        // Close any trailing window
+        // Close any trailing window at the end of the day
         if (currentWindow) {
-            const startIdx = dayForecasts.findIndex(df => df.timeBlock === currentWindow.startTime);
-            const endIdx = dayForecasts.findIndex(df => df.timeBlock === currentWindow.endTime);
-            const duration = endIdx - startIdx + 1;
+            const closingWindow = currentWindow;
+            const startIdx = dayForecasts.findIndex(df => df.timeBlock === closingWindow.startTime);
+            const endIdx = dayForecasts.findIndex(df => df.timeBlock === closingWindow.endTime);
+            const duration = Math.max(1, endIdx - startIdx + 1);
             
             windows.push({
-                ...currentWindow as ArbitrageWindow,
-                avgPrice: (currentWindow.avgPrice || 0) / duration
+                startTime: closingWindow.startTime!,
+                endTime: closingWindow.endTime!,
+                type: closingWindow.type!,
+                avgPrice: (closingWindow.avgPrice || 0) / duration
             });
         }
 
