@@ -65,6 +65,15 @@ const calculateArbitrageOpportunities = (forecasts: FutureForecast[]): Arbitrage
 
     const arbitrageDays: ArbitrageDay[] = [];
 
+    // Use a concrete type for accumulation with explicit count tracking
+    interface WindowAccumulator {
+        startTime: string;
+        endTime: string;
+        type: 'CHARGE' | 'DISCHARGE';
+        priceSum: number;
+        count: number;
+    }
+
     Object.entries(groupedByDay).forEach(([dateStr, dayForecasts]) => {
         // Sort by price to find percentiles
         const sortedPrices = [...dayForecasts].sort((a, b) => a.price - b.price);
@@ -81,20 +90,12 @@ const calculateArbitrageOpportunities = (forecasts: FutureForecast[]): Arbitrage
         const dischargeThreshold = prices[p90Index];
 
         const windows: ArbitrageWindow[] = [];
-        
-        // Use a concrete type for accumulation with explicit count tracking
-        interface WindowAccumulator {
-            startTime: string;
-            endTime: string;
-            type: 'CHARGE' | 'DISCHARGE';
-            priceSum: number;
-            count: number;
-        }
-
         let currentWindow: WindowAccumulator | null = null;
 
         // Iterate through chronological forecasts to find contiguous windows
-        dayForecasts.forEach((f) => {
+        // NOTE: Using a for...of loop here is critical for TypeScript's strict null checks
+        // to correctly narrow the type of 'currentWindow' within the loop body.
+        for (const f of dayForecasts) {
             let type: 'CHARGE' | 'DISCHARGE' | null = null;
             
             if (f.price <= chargeThreshold) type = 'CHARGE';
@@ -146,7 +147,7 @@ const calculateArbitrageOpportunities = (forecasts: FutureForecast[]): Arbitrage
                     currentWindow = null;
                 }
             }
-        });
+        }
 
         // Close any trailing window at the end of the day
         if (currentWindow) {
