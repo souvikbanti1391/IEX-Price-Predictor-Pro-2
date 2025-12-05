@@ -1,0 +1,5 @@
+{
+  "name": "IEX DAM Price Predictor Pro-2",
+  "description": "Advanced electricity price forecasting engine with dynamic model selection based on dataset characteristics. Features interactive visualizations and comparative analysis.",
+  "requestFramePermissions": []
+}
