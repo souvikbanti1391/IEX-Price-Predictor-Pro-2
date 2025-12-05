@@ -1,5 +1,14 @@
 import { IEXDataPoint, PredictionResult, SimulationResult, FutureForecast, ArbitrageDay, ArbitrageWindow } from '../types';
 
+// Helper interface for arbitrage calculation
+interface WindowAccumulator {
+    startTime: string;
+    endTime: string;
+    type: 'CHARGE' | 'DISCHARGE';
+    priceSum: number;
+    count: number;
+}
+
 const MODELS = [
     { name: 'SARIMAX', color: '#3b82f6', type: 'statistical' },
     { name: 'Random Forest', color: '#10b981', type: 'ensemble' },
@@ -65,16 +74,7 @@ const calculateArbitrageOpportunities = (forecasts: FutureForecast[]): Arbitrage
 
     const arbitrageDays: ArbitrageDay[] = [];
 
-    // Use a concrete type for accumulation with explicit count tracking
-    interface WindowAccumulator {
-        startTime: string;
-        endTime: string;
-        type: 'CHARGE' | 'DISCHARGE';
-        priceSum: number;
-        count: number;
-    }
-
-    // Change .forEach to for...of loop to avoid closure/scope analysis issues with 'currentWindow'
+    // Use for...of loop to avoid closure issues
     for (const [dateStr, dayForecasts] of Object.entries(groupedByDay)) {
         // Sort by price to find percentiles
         const sortedPrices = [...dayForecasts].sort((a, b) => a.price - b.price);
@@ -93,17 +93,14 @@ const calculateArbitrageOpportunities = (forecasts: FutureForecast[]): Arbitrage
         const windows: ArbitrageWindow[] = [];
         let currentWindow: WindowAccumulator | null = null;
 
-        // Iterate through chronological forecasts to find contiguous windows
-        // NOTE: Using a for...of loop here is critical for TypeScript's strict null checks
-        // to correctly narrow the type of 'currentWindow' within the loop body.
         for (const f of dayForecasts) {
             let type: 'CHARGE' | 'DISCHARGE' | null = null;
             
             if (f.price <= chargeThreshold) type = 'CHARGE';
             else if (f.price >= dischargeThreshold) type = 'DISCHARGE';
 
-            if (type) {
-                if (!currentWindow) {
+            if (type !== null) {
+                if (currentWindow === null) {
                     // Start new window
                     currentWindow = {
                         startTime: f.timeBlock,
@@ -112,38 +109,42 @@ const calculateArbitrageOpportunities = (forecasts: FutureForecast[]): Arbitrage
                         priceSum: f.price,
                         count: 1
                     };
-                } else if (currentWindow.type === type) {
-                    // Extend current window
-                    currentWindow.endTime = f.timeBlock;
-                    currentWindow.priceSum += f.price;
-                    currentWindow.count += 1;
                 } else {
-                    // Switch type (close current, start new)
-                    const cw = currentWindow as WindowAccumulator;
-                    windows.push({
-                        startTime: cw.startTime,
-                        endTime: cw.endTime,
-                        type: cw.type,
-                        avgPrice: cw.priceSum / cw.count
-                    });
+                    // Explicit casting to ensure TypeScript knows this is not null
+                    const acc = currentWindow as WindowAccumulator;
 
-                    currentWindow = {
-                        startTime: f.timeBlock,
-                        endTime: f.timeBlock,
-                        type: type,
-                        priceSum: f.price,
-                        count: 1
-                    };
+                    if (acc.type === type) {
+                        // Extend current window
+                        acc.endTime = f.timeBlock;
+                        acc.priceSum += f.price;
+                        acc.count += 1;
+                    } else {
+                        // Switch type (close current, start new)
+                        windows.push({
+                            startTime: acc.startTime,
+                            endTime: acc.endTime,
+                            type: acc.type,
+                            avgPrice: acc.priceSum / acc.count
+                        });
+
+                        currentWindow = {
+                            startTime: f.timeBlock,
+                            endTime: f.timeBlock,
+                            type: type,
+                            priceSum: f.price,
+                            count: 1
+                        };
+                    }
                 }
             } else {
-                if (currentWindow) {
+                if (currentWindow !== null) {
                     // Close window if we exit the threshold zone
-                    const cw = currentWindow as WindowAccumulator;
+                    const acc = currentWindow as WindowAccumulator;
                     windows.push({
-                        startTime: cw.startTime,
-                        endTime: cw.endTime,
-                        type: cw.type,
-                        avgPrice: cw.priceSum / cw.count
+                        startTime: acc.startTime,
+                        endTime: acc.endTime,
+                        type: acc.type,
+                        avgPrice: acc.priceSum / acc.count
                     });
                     currentWindow = null;
                 }
@@ -151,13 +152,13 @@ const calculateArbitrageOpportunities = (forecasts: FutureForecast[]): Arbitrage
         }
 
         // Close any trailing window at the end of the day
-        if (currentWindow) {
-            const cw = currentWindow as WindowAccumulator;
+        if (currentWindow !== null) {
+            const acc = currentWindow as WindowAccumulator;
             windows.push({
-                startTime: cw.startTime,
-                endTime: cw.endTime,
-                type: cw.type,
-                avgPrice: cw.priceSum / cw.count
+                startTime: acc.startTime,
+                endTime: acc.endTime,
+                type: acc.type,
+                avgPrice: acc.priceSum / acc.count
             });
         }
 
