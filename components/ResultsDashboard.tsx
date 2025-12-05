@@ -1,7 +1,8 @@
 import React from 'react';
-import { Trophy, TrendingUp, Activity, BarChart3, AlertCircle, Compass } from 'lucide-react';
+import { Trophy, TrendingUp, Activity, AlertCircle, Compass, Download, Zap, Battery, BatteryCharging } from 'lucide-react';
 import { SimulationResult, ConfigState, PredictionResult } from '../types';
 import { ValidationChart, ForecastChart, MetricComparisonChart, ResidualChart } from './Charts';
+import { exportForecastsToCSV } from '../services/predictionEngine';
 
 interface ResultsDashboardProps {
     results: SimulationResult;
@@ -116,6 +117,90 @@ const ResultsDashboard: React.FC<ResultsDashboardProps> = ({ results, config }) 
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 mb-8">
                 <ValidationChart results={results} config={config} />
                 <ForecastChart results={results} config={config} />
+            </div>
+
+            {/* Strategic Analysis Section */}
+            <div className="bg-zinc-900 rounded-2xl shadow-xl border border-zinc-800 mb-8 overflow-hidden">
+                <div className="p-6 border-b border-zinc-800 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                    <div>
+                        <h2 className="text-xl font-bold text-zinc-100 flex items-center gap-3">
+                            <Zap className="text-amber-500" />
+                            Strategic Analysis & Arbitrage
+                        </h2>
+                        <p className="text-sm text-zinc-500 mt-1">Optimal charge/discharge windows based on price volatility</p>
+                    </div>
+                    <button 
+                        onClick={() => exportForecastsToCSV(results.forecasts, results.bestModel)}
+                        className="flex items-center gap-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 px-4 py-2 rounded-lg font-bold text-sm transition-colors border border-zinc-700"
+                    >
+                        <Download size={16} />
+                        Download Forecast CSV
+                    </button>
+                </div>
+                
+                <div className="p-6">
+                    <div className="grid grid-cols-1 gap-4">
+                        {results.arbitrageData.map((day, idx) => (
+                            <div key={day.dateStr} className="bg-zinc-950 border border-zinc-800 rounded-xl p-4">
+                                <div className="flex flex-col md:flex-row md:items-center gap-6 mb-4">
+                                    <div className="w-32 flex-shrink-0">
+                                        <div className="text-zinc-500 text-xs font-bold uppercase tracking-wider">Date</div>
+                                        <div className="text-zinc-200 font-bold">{day.dateStr}</div>
+                                    </div>
+                                    <div className="flex gap-6 text-sm">
+                                        <div>
+                                            <span className="text-zinc-600 mr-2">Charge Threshold:</span>
+                                            <span className="text-emerald-400 font-mono font-bold">≤ ₹{day.chargeThreshold.toFixed(2)}</span>
+                                        </div>
+                                        <div>
+                                            <span className="text-zinc-600 mr-2">Discharge Threshold:</span>
+                                            <span className="text-red-400 font-mono font-bold">≥ ₹{day.dischargeThreshold.toFixed(2)}</span>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div className="space-y-2">
+                                    {day.windows.map((window, wIdx) => (
+                                        <div 
+                                            key={`${day.dateStr}-${wIdx}`}
+                                            className={`flex items-center justify-between p-3 rounded-lg border ${
+                                                window.type === 'CHARGE' 
+                                                    ? 'bg-emerald-500/10 border-emerald-500/20' 
+                                                    : 'bg-red-500/10 border-red-500/20'
+                                            }`}
+                                        >
+                                            <div className="flex items-center gap-3">
+                                                {window.type === 'CHARGE' 
+                                                    ? <BatteryCharging className="text-emerald-500" size={20} />
+                                                    : <Battery className="text-red-500" size={20} />
+                                                }
+                                                <span className={`font-bold text-sm ${
+                                                    window.type === 'CHARGE' ? 'text-emerald-400' : 'text-red-400'
+                                                }`}>
+                                                    {window.type}
+                                                </span>
+                                            </div>
+                                            
+                                            <div className="flex items-center gap-4 text-sm font-mono text-zinc-300">
+                                                <div className="bg-black/30 px-2 py-1 rounded">
+                                                    {window.startTime} - {window.endTime}
+                                                </div>
+                                                <div className="font-bold">
+                                                    Avg: ₹{window.avgPrice.toFixed(2)}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ))}
+                                    {day.windows.length === 0 && (
+                                        <div className="text-zinc-600 text-sm italic text-center py-2">
+                                            No significant arbitrage opportunities found for this day.
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
             </div>
 
             <div className="mb-8">

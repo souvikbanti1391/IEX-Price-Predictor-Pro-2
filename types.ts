@@ -33,11 +33,28 @@ export interface PredictionResult {
     color: string;
 }
 
+export interface ArbitrageWindow {
+    startTime: string;
+    endTime: string;
+    type: 'CHARGE' | 'DISCHARGE';
+    avgPrice: number;
+}
+
+export interface ArbitrageDay {
+    dateStr: string;
+    windows: ArbitrageWindow[];
+    dailyMin: number;
+    dailyMax: number;
+    chargeThreshold: number;
+    dischargeThreshold: number;
+}
+
 export interface SimulationResult {
     processedData: IEXDataPoint[];
     modelResults: Record<string, PredictionResult>;
     bestModel: string;
     forecasts: FutureForecast[];
+    arbitrageData: ArbitrageDay[];
     dataCharacteristics: {
         volatility: number;
         trend: number;

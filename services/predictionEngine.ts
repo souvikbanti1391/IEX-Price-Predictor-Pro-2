@@ -1,4 +1,4 @@
-import { IEXDataPoint, PredictionResult, SimulationResult, FutureForecast } from '../types';
+import { IEXDataPoint, PredictionResult, SimulationResult, FutureForecast, ArbitrageDay, ArbitrageWindow } from '../types';
 
 const MODELS = [
     { name: 'SARIMAX', color: '#3b82f6', type: 'statistical' },
@@ -50,6 +50,143 @@ const calculateStdDev = (data: number[]) => {
     const mean = data.reduce((a, b) => a + b, 0) / data.length;
     const variance = data.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / data.length;
     return Math.sqrt(variance);
+};
+
+const calculateArbitrageOpportunities = (forecasts: FutureForecast[]): ArbitrageDay[] => {
+    const groupedByDay: Record<string, FutureForecast[]> = {};
+    
+    // Group forecasts by day
+    forecasts.forEach(f => {
+        if (!groupedByDay[f.dateStr]) {
+            groupedByDay[f.dateStr] = [];
+        }
+        groupedByDay[f.dateStr].push(f);
+    });
+
+    const arbitrageDays: ArbitrageDay[] = [];
+
+    Object.entries(groupedByDay).forEach(([dateStr, dayForecasts]) => {
+        // Sort by price to find percentiles
+        const sortedPrices = [...dayForecasts].sort((a, b) => a.price - b.price);
+        const prices = sortedPrices.map(f => f.price);
+        
+        const minPrice = prices[0];
+        const maxPrice = prices[prices.length - 1];
+        
+        // Thresholds: Bottom 10% for charging, Top 10% for discharging
+        const p10Index = Math.floor(prices.length * 0.1);
+        const p90Index = Math.floor(prices.length * 0.9);
+        
+        const chargeThreshold = prices[p10Index];
+        const dischargeThreshold = prices[p90Index];
+
+        const windows: ArbitrageWindow[] = [];
+        let currentWindow: Partial<ArbitrageWindow> | null = null;
+
+        // Iterate through chronological forecasts to find contiguous windows
+        dayForecasts.forEach((f, idx) => {
+            let type: 'CHARGE' | 'DISCHARGE' | null = null;
+            
+            if (f.price <= chargeThreshold) type = 'CHARGE';
+            else if (f.price >= dischargeThreshold) type = 'DISCHARGE';
+
+            if (type) {
+                if (!currentWindow) {
+                    // Start new window
+                    currentWindow = {
+                        startTime: f.timeBlock,
+                        endTime: f.timeBlock, // Temporary end
+                        type: type,
+                        avgPrice: f.price // Start sum
+                    };
+                } else if (currentWindow.type === type) {
+                    // Extend current window
+                    currentWindow.endTime = f.timeBlock;
+                    // Aggregate price (store sum temporarily)
+                    currentWindow.avgPrice = (currentWindow.avgPrice || 0) + f.price;
+                } else {
+                    // Switch type (close current, start new)
+                    // Finalize average
+                    const duration = dayForecasts.findIndex(df => df.timeBlock === currentWindow?.endTime) - dayForecasts.findIndex(df => df.timeBlock === currentWindow?.startTime) + 1;
+                    windows.push({
+                        ...currentWindow as ArbitrageWindow,
+                        avgPrice: (currentWindow.avgPrice || 0) / duration
+                    });
+
+                    currentWindow = {
+                        startTime: f.timeBlock,
+                        endTime: f.timeBlock,
+                        type: type,
+                        avgPrice: f.price
+                    };
+                }
+            } else {
+                if (currentWindow) {
+                    // Close window
+                    const startIdx = dayForecasts.findIndex(df => df.timeBlock === currentWindow?.startTime);
+                    const endIdx = dayForecasts.findIndex(df => df.timeBlock === currentWindow?.endTime);
+                    const duration = endIdx - startIdx + 1;
+                    
+                    windows.push({
+                        ...currentWindow as ArbitrageWindow,
+                        avgPrice: (currentWindow.avgPrice || 0) / duration
+                    });
+                    currentWindow = null;
+                }
+            }
+        });
+
+        // Close any trailing window
+        if (currentWindow) {
+            const startIdx = dayForecasts.findIndex(df => df.timeBlock === currentWindow.startTime);
+            const endIdx = dayForecasts.findIndex(df => df.timeBlock === currentWindow.endTime);
+            const duration = endIdx - startIdx + 1;
+            
+            windows.push({
+                ...currentWindow as ArbitrageWindow,
+                avgPrice: (currentWindow.avgPrice || 0) / duration
+            });
+        }
+
+        arbitrageDays.push({
+            dateStr,
+            windows,
+            dailyMin: minPrice,
+            dailyMax: maxPrice,
+            chargeThreshold,
+            dischargeThreshold
+        });
+    });
+
+    return arbitrageDays;
+};
+
+export const exportForecastsToCSV = (forecasts: FutureForecast[], modelName: string) => {
+    // CSV Header
+    const headers = ['Date', 'Time Block', 'Predicted Price (Rs/kWh)', 'Lower Bound', 'Upper Bound', 'Model'];
+    const rows = forecasts.map(f => [
+        f.dateStr,
+        f.timeBlock,
+        f.price.toFixed(4),
+        f.lowerBound.toFixed(4),
+        f.upperBound.toFixed(4),
+        modelName
+    ]);
+
+    const csvContent = [
+        headers.join(','),
+        ...rows.map(row => row.join(','))
+    ].join('\n');
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', `IEX_Forecast_${modelName}_${new Date().toISOString().slice(0,10)}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
 };
 
 export const runSimulation = (
@@ -300,12 +437,16 @@ export const runSimulation = (
                 }
             }
         }
+        
+        // 7. Calculate Arbitrage Opportunities
+        const arbitrageData = calculateArbitrageOpportunities(forecasts);
 
         resolve({
             processedData: data,
             modelResults,
             bestModel,
             forecasts,
+            arbitrageData,
             dataCharacteristics: {
                 volatility,
                 trend: slope,
