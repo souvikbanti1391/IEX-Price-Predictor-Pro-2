@@ -52,11 +52,14 @@ const App: React.FC = () => {
                         <h1 className="text-4xl md:text-5xl font-extrabold tracking-tight mb-4 text-white">
                             IEX DAM Price Predictor <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-indigo-400">Pro</span>
                         </h1>
-                        <div className="flex flex-col items-center gap-2 max-w-3xl">
+                        <div className="flex flex-col items-center gap-1 max-w-3xl">
                             <p className="text-lg text-zinc-400 font-medium">
-                                Advanced multi-model forecasting engine. Developed as a part of EMBA project@ VGSOM
+                                Advanced multi-model forecasting engine.
                             </p>
-                            <p className="text-lg text-indigo-400 font-medium">
+                            <p className="text-lg text-zinc-400 font-medium">
+                                Developed as a part of EMBA project@VGSOM
+                            </p>
+                            <p className="text-lg text-indigo-400 font-medium mt-2">
                                 Upload your IEX Market Clearing Price data to automatically identify the best performing algorithm
                             </p>
                         </div>
