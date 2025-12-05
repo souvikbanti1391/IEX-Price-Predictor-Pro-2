@@ -115,7 +115,7 @@ const calculateArbitrageOpportunities = (forecasts: FutureForecast[]): Arbitrage
                         windows.push({
                             startTime: winStart,
                             endTime: winEnd,
-                            type: winType,
+                            type: winType as 'CHARGE' | 'DISCHARGE',
                             avgPrice: winSum / winCount
                         });
 
@@ -132,7 +132,7 @@ const calculateArbitrageOpportunities = (forecasts: FutureForecast[]): Arbitrage
                     windows.push({
                         startTime: winStart,
                         endTime: winEnd,
-                        type: winType,
+                        type: winType as 'CHARGE' | 'DISCHARGE',
                         avgPrice: winSum / winCount
                     });
                     winType = null;
@@ -147,7 +147,7 @@ const calculateArbitrageOpportunities = (forecasts: FutureForecast[]): Arbitrage
             windows.push({
                 startTime: winStart,
                 endTime: winEnd,
-                type: winType,
+                type: winType as 'CHARGE' | 'DISCHARGE',
                 avgPrice: winSum / winCount
             });
         }
