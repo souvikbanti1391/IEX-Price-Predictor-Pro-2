@@ -81,7 +81,16 @@ const calculateArbitrageOpportunities = (forecasts: FutureForecast[]): Arbitrage
         const dischargeThreshold = prices[p90Index];
 
         const windows: ArbitrageWindow[] = [];
-        let currentWindow: Partial<ArbitrageWindow> | null = null;
+        
+        // Use a concrete type for accumulation to avoid null/undefined TS errors
+        interface WindowAccumulator {
+            startTime: string;
+            endTime: string;
+            type: 'CHARGE' | 'DISCHARGE';
+            priceSum: number;
+        }
+
+        let currentWindow: WindowAccumulator | null = null;
 
         // Iterate through chronological forecasts to find contiguous windows
         dayForecasts.forEach((f, idx) => {
@@ -97,48 +106,48 @@ const calculateArbitrageOpportunities = (forecasts: FutureForecast[]): Arbitrage
                         startTime: f.timeBlock,
                         endTime: f.timeBlock, // Temporary end
                         type: type,
-                        avgPrice: f.price // Start sum
+                        priceSum: f.price // Start sum
                     };
                 } else if (currentWindow.type === type) {
                     // Extend current window
                     currentWindow.endTime = f.timeBlock;
-                    // Aggregate price (store sum temporarily)
-                    currentWindow.avgPrice = (currentWindow.avgPrice || 0) + f.price;
+                    // Aggregate price
+                    currentWindow.priceSum += f.price;
                 } else {
                     // Switch type (close current, start new)
-                    // We must capture the current window before overwriting it
-                    const closingWindow = currentWindow;
-                    const startIdx = dayForecasts.findIndex(df => df.timeBlock === closingWindow.startTime);
-                    const endIdx = dayForecasts.findIndex(df => df.timeBlock === closingWindow.endTime);
+                    // Explicitly capture variable to satisfy TS compiler
+                    const cw = currentWindow;
+                    const startIdx = dayForecasts.findIndex(df => df.timeBlock === cw.startTime);
+                    const endIdx = dayForecasts.findIndex(df => df.timeBlock === cw.endTime);
                     const duration = Math.max(1, endIdx - startIdx + 1);
 
                     windows.push({
-                        startTime: closingWindow.startTime!,
-                        endTime: closingWindow.endTime!,
-                        type: closingWindow.type!,
-                        avgPrice: (closingWindow.avgPrice || 0) / duration
+                        startTime: cw.startTime,
+                        endTime: cw.endTime,
+                        type: cw.type,
+                        avgPrice: cw.priceSum / duration
                     });
 
                     currentWindow = {
                         startTime: f.timeBlock,
                         endTime: f.timeBlock,
                         type: type,
-                        avgPrice: f.price
+                        priceSum: f.price
                     };
                 }
             } else {
                 if (currentWindow) {
                     // Close window if we exit the threshold zone
-                    const closingWindow = currentWindow;
-                    const startIdx = dayForecasts.findIndex(df => df.timeBlock === closingWindow.startTime);
-                    const endIdx = dayForecasts.findIndex(df => df.timeBlock === closingWindow.endTime);
+                    const cw = currentWindow;
+                    const startIdx = dayForecasts.findIndex(df => df.timeBlock === cw.startTime);
+                    const endIdx = dayForecasts.findIndex(df => df.timeBlock === cw.endTime);
                     const duration = Math.max(1, endIdx - startIdx + 1);
                     
                     windows.push({
-                        startTime: closingWindow.startTime!,
-                        endTime: closingWindow.endTime!,
-                        type: closingWindow.type!,
-                        avgPrice: (closingWindow.avgPrice || 0) / duration
+                        startTime: cw.startTime,
+                        endTime: cw.endTime,
+                        type: cw.type,
+                        avgPrice: cw.priceSum / duration
                     });
                     currentWindow = null;
                 }
@@ -147,16 +156,16 @@ const calculateArbitrageOpportunities = (forecasts: FutureForecast[]): Arbitrage
 
         // Close any trailing window at the end of the day
         if (currentWindow) {
-            const closingWindow = currentWindow;
-            const startIdx = dayForecasts.findIndex(df => df.timeBlock === closingWindow.startTime);
-            const endIdx = dayForecasts.findIndex(df => df.timeBlock === closingWindow.endTime);
+            const cw = currentWindow;
+            const startIdx = dayForecasts.findIndex(df => df.timeBlock === cw.startTime);
+            const endIdx = dayForecasts.findIndex(df => df.timeBlock === cw.endTime);
             const duration = Math.max(1, endIdx - startIdx + 1);
             
             windows.push({
-                startTime: closingWindow.startTime!,
-                endTime: closingWindow.endTime!,
-                type: closingWindow.type!,
-                avgPrice: (closingWindow.avgPrice || 0) / duration
+                startTime: cw.startTime,
+                endTime: cw.endTime,
+                type: cw.type,
+                avgPrice: cw.priceSum / duration
             });
         }
 
