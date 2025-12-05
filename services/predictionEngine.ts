@@ -82,18 +82,19 @@ const calculateArbitrageOpportunities = (forecasts: FutureForecast[]): Arbitrage
 
         const windows: ArbitrageWindow[] = [];
         
-        // Use a concrete type for accumulation to avoid null/undefined TS errors
+        // Use a concrete type for accumulation with explicit count tracking
         interface WindowAccumulator {
             startTime: string;
             endTime: string;
             type: 'CHARGE' | 'DISCHARGE';
             priceSum: number;
+            count: number;
         }
 
         let currentWindow: WindowAccumulator | null = null;
 
         // Iterate through chronological forecasts to find contiguous windows
-        dayForecasts.forEach((f, idx) => {
+        dayForecasts.forEach((f) => {
             let type: 'CHARGE' | 'DISCHARGE' | null = null;
             
             if (f.price <= chargeThreshold) type = 'CHARGE';
@@ -104,50 +105,43 @@ const calculateArbitrageOpportunities = (forecasts: FutureForecast[]): Arbitrage
                     // Start new window
                     currentWindow = {
                         startTime: f.timeBlock,
-                        endTime: f.timeBlock, // Temporary end
+                        endTime: f.timeBlock,
                         type: type,
-                        priceSum: f.price // Start sum
+                        priceSum: f.price,
+                        count: 1
                     };
                 } else if (currentWindow.type === type) {
                     // Extend current window
                     currentWindow.endTime = f.timeBlock;
-                    // Aggregate price
                     currentWindow.priceSum += f.price;
+                    currentWindow.count += 1;
                 } else {
                     // Switch type (close current, start new)
-                    // Explicitly capture variable to satisfy TS compiler
                     const cw = currentWindow;
-                    const startIdx = dayForecasts.findIndex(df => df.timeBlock === cw.startTime);
-                    const endIdx = dayForecasts.findIndex(df => df.timeBlock === cw.endTime);
-                    const duration = Math.max(1, endIdx - startIdx + 1);
-
                     windows.push({
                         startTime: cw.startTime,
                         endTime: cw.endTime,
                         type: cw.type,
-                        avgPrice: cw.priceSum / duration
+                        avgPrice: cw.priceSum / cw.count
                     });
 
                     currentWindow = {
                         startTime: f.timeBlock,
                         endTime: f.timeBlock,
                         type: type,
-                        priceSum: f.price
+                        priceSum: f.price,
+                        count: 1
                     };
                 }
             } else {
                 if (currentWindow) {
                     // Close window if we exit the threshold zone
                     const cw = currentWindow;
-                    const startIdx = dayForecasts.findIndex(df => df.timeBlock === cw.startTime);
-                    const endIdx = dayForecasts.findIndex(df => df.timeBlock === cw.endTime);
-                    const duration = Math.max(1, endIdx - startIdx + 1);
-                    
                     windows.push({
                         startTime: cw.startTime,
                         endTime: cw.endTime,
                         type: cw.type,
-                        avgPrice: cw.priceSum / duration
+                        avgPrice: cw.priceSum / cw.count
                     });
                     currentWindow = null;
                 }
@@ -157,15 +151,11 @@ const calculateArbitrageOpportunities = (forecasts: FutureForecast[]): Arbitrage
         // Close any trailing window at the end of the day
         if (currentWindow) {
             const cw = currentWindow;
-            const startIdx = dayForecasts.findIndex(df => df.timeBlock === cw.startTime);
-            const endIdx = dayForecasts.findIndex(df => df.timeBlock === cw.endTime);
-            const duration = Math.max(1, endIdx - startIdx + 1);
-            
             windows.push({
                 startTime: cw.startTime,
                 endTime: cw.endTime,
                 type: cw.type,
-                avgPrice: cw.priceSum / duration
+                avgPrice: cw.priceSum / cw.count
             });
         }
 
@@ -302,9 +292,6 @@ export const runSimulation = (
             }
 
             // Expanded Jitter Range
-            // This ensures that for "average" datasets where penalties are close,
-            // the winner is determined by the file's unique hash (seed).
-            // This prevents the same model from winning on every "average" file.
             const staticJitter = (rng() - 0.5) * 0.015; 
             
             modelPenalties[model.name] = Math.max(0.005, penalty + staticJitter);
@@ -341,7 +328,6 @@ export const runSimulation = (
                 const noise = (modelRng() - 0.5) * 2;
                 
                 // Calculate simulated error
-                // prediction = actual + (actual * penalty * difficulty * noise)
                 const relativeError = penalty * difficultyMultiplier * noise;
                 const predictionError = point.mcpKWh * relativeError;
                 
@@ -357,7 +343,6 @@ export const runSimulation = (
                     const actualDiff = currActual - prevActual;
                     const predDiff = pred - prevActual;
                     
-                    // If both went up or both went down
                     if ((actualDiff > 0 && predDiff > 0) || (actualDiff < 0 && predDiff < 0) || (actualDiff === 0 && predDiff === 0)) {
                         correctDirection++;
                     }
@@ -369,13 +354,11 @@ export const runSimulation = (
             const mse = errors.reduce((sum, e) => sum + e * e, 0) / errors.length;
             const rmse = Math.sqrt(mse);
             const mae = errors.reduce((sum, e) => sum + e, 0) / errors.length;
-            // MAPE handling division by zero
             const mape = (errors.reduce((sum, e, i) => {
                 const actual = data[i].mcpKWh;
                 return sum + (actual === 0 ? 0 : Math.abs(e / actual));
             }, 0) / errors.length) * 100;
             
-            // R2 Score
             const ssRes = errors.reduce((sum, e) => sum + e * e, 0);
             const ssTot = prices.reduce((sum, p) => sum + Math.pow(p - meanPrice, 2), 0);
             const r2 = ssTot === 0 ? 0 : 1 - (ssRes / ssTot);
@@ -422,8 +405,6 @@ export const runSimulation = (
 
             for (let h = 0; h < 24; h++) {
                 for (let m = 0; m < 60; m += 15) {
-                    // Base price reconstruction from simple heuristics
-                    // (In a real app, the model would output this, here we simulate the forecast shape)
                     let basePrice = meanPrice;
 
                     // Seasonality (Hourly)
@@ -437,14 +418,13 @@ export const runSimulation = (
                     // Weekly Seasonality
                     if (isWeekend) basePrice *= 0.92;
 
-                    // Add simulated forecast noise (uncertainty grows with time)
+                    // Add simulated forecast noise
                     const uncertaintyGrowth = 1 + (d * 0.05); // 5% more uncertain each day
                     const randomVar = (forecastRng() - 0.5) * 0.1 * uncertaintyGrowth;
                     
                     let predictedPrice = basePrice * (1 + randomVar);
                     predictedPrice = Math.max(0, predictedPrice);
 
-                    // Confidence Intervals based on historical RMSE
                     const interval = winnerMetrics.rmse * zScore * uncertaintyGrowth;
 
                     forecasts.push({
