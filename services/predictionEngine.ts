@@ -74,7 +74,8 @@ const calculateArbitrageOpportunities = (forecasts: FutureForecast[]): Arbitrage
         count: number;
     }
 
-    Object.entries(groupedByDay).forEach(([dateStr, dayForecasts]) => {
+    // Change .forEach to for...of loop to avoid closure/scope analysis issues with 'currentWindow'
+    for (const [dateStr, dayForecasts] of Object.entries(groupedByDay)) {
         // Sort by price to find percentiles
         const sortedPrices = [...dayForecasts].sort((a, b) => a.price - b.price);
         const prices = sortedPrices.map(f => f.price);
@@ -118,7 +119,7 @@ const calculateArbitrageOpportunities = (forecasts: FutureForecast[]): Arbitrage
                     currentWindow.count += 1;
                 } else {
                     // Switch type (close current, start new)
-                    const cw = currentWindow;
+                    const cw = currentWindow as WindowAccumulator;
                     windows.push({
                         startTime: cw.startTime,
                         endTime: cw.endTime,
@@ -137,7 +138,7 @@ const calculateArbitrageOpportunities = (forecasts: FutureForecast[]): Arbitrage
             } else {
                 if (currentWindow) {
                     // Close window if we exit the threshold zone
-                    const cw = currentWindow;
+                    const cw = currentWindow as WindowAccumulator;
                     windows.push({
                         startTime: cw.startTime,
                         endTime: cw.endTime,
@@ -151,7 +152,7 @@ const calculateArbitrageOpportunities = (forecasts: FutureForecast[]): Arbitrage
 
         // Close any trailing window at the end of the day
         if (currentWindow) {
-            const cw = currentWindow;
+            const cw = currentWindow as WindowAccumulator;
             windows.push({
                 startTime: cw.startTime,
                 endTime: cw.endTime,
@@ -168,7 +169,7 @@ const calculateArbitrageOpportunities = (forecasts: FutureForecast[]): Arbitrage
             chargeThreshold,
             dischargeThreshold
         });
-    });
+    }
 
     return arbitrageDays;
 };
