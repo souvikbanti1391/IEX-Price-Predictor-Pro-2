@@ -1,14 +1,5 @@
 import { IEXDataPoint, PredictionResult, SimulationResult, FutureForecast, ArbitrageDay, ArbitrageWindow } from '../types';
 
-// Helper interface for arbitrage calculation
-interface WindowAccumulator {
-    startTime: string;
-    endTime: string;
-    type: 'CHARGE' | 'DISCHARGE';
-    priceSum: number;
-    count: number;
-}
-
 const MODELS = [
     { name: 'SARIMAX', color: '#3b82f6', type: 'statistical' },
     { name: 'Random Forest', color: '#10b981', type: 'ensemble' },
@@ -91,74 +82,73 @@ const calculateArbitrageOpportunities = (forecasts: FutureForecast[]): Arbitrage
         const dischargeThreshold = prices[p90Index];
 
         const windows: ArbitrageWindow[] = [];
-        let currentWindow: WindowAccumulator | null = null;
+        
+        // Primitive State Variables (Avoids Object|Null TS issues)
+        let winStart: string = "";
+        let winEnd: string = "";
+        let winType: 'CHARGE' | 'DISCHARGE' | null = null;
+        let winSum: number = 0;
+        let winCount: number = 0;
 
         for (const f of dayForecasts) {
-            let type: 'CHARGE' | 'DISCHARGE' | null = null;
+            let currentType: 'CHARGE' | 'DISCHARGE' | null = null;
             
-            if (f.price <= chargeThreshold) type = 'CHARGE';
-            else if (f.price >= dischargeThreshold) type = 'DISCHARGE';
+            if (f.price <= chargeThreshold) currentType = 'CHARGE';
+            else if (f.price >= dischargeThreshold) currentType = 'DISCHARGE';
 
-            if (type !== null) {
-                if (currentWindow === null) {
+            if (currentType !== null) {
+                if (winType === null) {
                     // Start new window
-                    currentWindow = {
-                        startTime: f.timeBlock,
-                        endTime: f.timeBlock,
-                        type: type,
-                        priceSum: f.price,
-                        count: 1
-                    };
+                    winStart = f.timeBlock;
+                    winEnd = f.timeBlock;
+                    winType = currentType;
+                    winSum = f.price;
+                    winCount = 1;
                 } else {
-                    // Explicit casting to ensure TypeScript knows this is not null
-                    const acc = currentWindow as WindowAccumulator;
-
-                    if (acc.type === type) {
+                    if (winType === currentType) {
                         // Extend current window
-                        acc.endTime = f.timeBlock;
-                        acc.priceSum += f.price;
-                        acc.count += 1;
+                        winEnd = f.timeBlock;
+                        winSum += f.price;
+                        winCount += 1;
                     } else {
-                        // Switch type (close current, start new)
+                        // Close current, start new
                         windows.push({
-                            startTime: acc.startTime,
-                            endTime: acc.endTime,
-                            type: acc.type,
-                            avgPrice: acc.priceSum / acc.count
+                            startTime: winStart,
+                            endTime: winEnd,
+                            type: winType,
+                            avgPrice: winSum / winCount
                         });
 
-                        currentWindow = {
-                            startTime: f.timeBlock,
-                            endTime: f.timeBlock,
-                            type: type,
-                            priceSum: f.price,
-                            count: 1
-                        };
+                        winStart = f.timeBlock;
+                        winEnd = f.timeBlock;
+                        winType = currentType;
+                        winSum = f.price;
+                        winCount = 1;
                     }
                 }
             } else {
-                if (currentWindow !== null) {
+                if (winType !== null) {
                     // Close window if we exit the threshold zone
-                    const acc = currentWindow as WindowAccumulator;
                     windows.push({
-                        startTime: acc.startTime,
-                        endTime: acc.endTime,
-                        type: acc.type,
-                        avgPrice: acc.priceSum / acc.count
+                        startTime: winStart,
+                        endTime: winEnd,
+                        type: winType,
+                        avgPrice: winSum / winCount
                     });
-                    currentWindow = null;
+                    winType = null;
+                    winSum = 0;
+                    winCount = 0;
                 }
             }
         }
 
         // Close any trailing window at the end of the day
-        if (currentWindow !== null) {
-            const acc = currentWindow as WindowAccumulator;
+        if (winType !== null) {
             windows.push({
-                startTime: acc.startTime,
-                endTime: acc.endTime,
-                type: acc.type,
-                avgPrice: acc.priceSum / acc.count
+                startTime: winStart,
+                endTime: winEnd,
+                type: winType,
+                avgPrice: winSum / winCount
             });
         }
 
