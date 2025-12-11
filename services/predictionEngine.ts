@@ -74,7 +74,7 @@ const calculateArbitrageOpportunities = (forecasts: FutureForecast[]): Arbitrage
 
         const windows: ArbitrageWindow[] = [];
         
-        // Primitive State Variables
+        // Primitive State Variables (Primitive types avoid 'never' inference errors)
         let winStart: string = "";
         let winEnd: string = "";
         let winType: 'CHARGE' | 'DISCHARGE' | null = null;
@@ -100,6 +100,7 @@ const calculateArbitrageOpportunities = (forecasts: FutureForecast[]): Arbitrage
                         winSum += f.price;
                         winCount += 1;
                     } else {
+                        // Switch type
                         windows.push({
                             startTime: winStart,
                             endTime: winEnd,
@@ -116,6 +117,7 @@ const calculateArbitrageOpportunities = (forecasts: FutureForecast[]): Arbitrage
                 }
             } else {
                 if (winType !== null) {
+                    // Close window
                     windows.push({
                         startTime: winStart,
                         endTime: winEnd,
@@ -198,9 +200,6 @@ export const runSimulation = (
         const dataLength = data.length;
 
         // --- REBALANCED MODEL SCORING ---
-        // Removed heavy LSTM bias. Models now start closer together.
-        // Random jitter increased to allow different winners based on seed.
-        
         const modelPenalties: Record<string, number> = {};
         const baseError = 0.04; 
 
@@ -214,14 +213,13 @@ export const runSimulation = (
                     break;
 
                 case 'Random Forest':
-                    // Performs well on high noise
                     if (volatility > 0.25) penalty -= 0.01;
                     if (dataLength > 1000) penalty -= 0.005;
                     break;
 
                 case 'XGBoost':
                     if (trendStrength > 0.05) penalty -= 0.01;
-                    penalty -= 0.002; // General small bonus
+                    penalty -= 0.002;
                     break;
 
                 case 'LightGBM':
@@ -233,17 +231,13 @@ export const runSimulation = (
                     break;
 
                 case 'LSTM':
-                    // Significantly reduced the "Big Data" bonus to prevent constant winning
-                    if (dataLength > 5000) penalty -= 0.015; // Was -0.03
+                    if (dataLength > 5000) penalty -= 0.015;
                     if (volatility > 0.2) penalty -= 0.005;
-                    // Penalty for small datasets remains
                     if (dataLength < 500) penalty += 0.02;
                     break;
             }
 
-            // Increased Jitter Range (-0.02 to +0.02) to randomize winner more effectively
             const staticJitter = (rng() - 0.5) * 0.04; 
-            
             modelPenalties[model.name] = Math.max(0.005, penalty + staticJitter);
         });
 
