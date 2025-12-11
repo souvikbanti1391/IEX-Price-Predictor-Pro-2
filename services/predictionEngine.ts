@@ -48,6 +48,7 @@ const calculateStdDev = (data: number[]) => {
     return Math.sqrt(variance);
 };
 
+// Fixed Arbitrage Calculation
 const calculateArbitrageOpportunities = (forecasts: FutureForecast[]): ArbitrageDay[] => {
     const groupedByDay: Record<string, FutureForecast[]> = {};
     
@@ -72,71 +73,83 @@ const calculateArbitrageOpportunities = (forecasts: FutureForecast[]): Arbitrage
         const chargeThreshold = prices[p10Index];
         const dischargeThreshold = prices[p90Index];
 
+        // CRITICAL FIX: Explicit type annotation prevents 'never[]' inference error
         const windows: ArbitrageWindow[] = [];
         
-        // Primitive State Variables (Primitive types avoid 'never' inference errors)
-        let winStart: string = "";
-        let winEnd: string = "";
-        let winType: 'CHARGE' | 'DISCHARGE' | null = null;
-        let winSum: number = 0;
-        let winCount: number = 0;
+        // State tracking using primitives
+        let activeStart: string | null = null;
+        let activeEnd: string | null = null;
+        let activeType: 'CHARGE' | 'DISCHARGE' | null = null;
+        let activeSum: number = 0;
+        let activeCount: number = 0;
 
         for (const f of dayForecasts) {
-            let currentType: 'CHARGE' | 'DISCHARGE' | null = null;
+            let currentStepType: 'CHARGE' | 'DISCHARGE' | null = null;
             
-            if (f.price <= chargeThreshold) currentType = 'CHARGE';
-            else if (f.price >= dischargeThreshold) currentType = 'DISCHARGE';
+            if (f.price <= chargeThreshold) currentStepType = 'CHARGE';
+            else if (f.price >= dischargeThreshold) currentStepType = 'DISCHARGE';
 
-            if (currentType !== null) {
-                if (winType === null) {
-                    winStart = f.timeBlock;
-                    winEnd = f.timeBlock;
-                    winType = currentType;
-                    winSum = f.price;
-                    winCount = 1;
+            if (currentStepType !== null) {
+                // We are in a actionable window
+                if (activeType === null) {
+                    // Start new window
+                    activeStart = f.timeBlock;
+                    activeEnd = f.timeBlock;
+                    activeType = currentStepType;
+                    activeSum = f.price;
+                    activeCount = 1;
                 } else {
-                    if (winType === currentType) {
-                        winEnd = f.timeBlock;
-                        winSum += f.price;
-                        winCount += 1;
+                    if (activeType === currentStepType) {
+                        // Extend current window
+                        activeEnd = f.timeBlock;
+                        activeSum += f.price;
+                        activeCount += 1;
                     } else {
-                        // Switch type
-                        windows.push({
-                            startTime: winStart,
-                            endTime: winEnd,
-                            type: winType as 'CHARGE' | 'DISCHARGE',
-                            avgPrice: winSum / winCount
-                        });
+                        // Close current and start new
+                         if (activeStart && activeEnd && activeType) {
+                            windows.push({
+                                startTime: activeStart,
+                                endTime: activeEnd,
+                                type: activeType,
+                                avgPrice: activeSum / activeCount
+                            });
+                        }
 
-                        winStart = f.timeBlock;
-                        winEnd = f.timeBlock;
-                        winType = currentType;
-                        winSum = f.price;
-                        winCount = 1;
+                        activeStart = f.timeBlock;
+                        activeEnd = f.timeBlock;
+                        activeType = currentStepType;
+                        activeSum = f.price;
+                        activeCount = 1;
                     }
                 }
             } else {
-                if (winType !== null) {
-                    // Close window
-                    windows.push({
-                        startTime: winStart,
-                        endTime: winEnd,
-                        type: winType as 'CHARGE' | 'DISCHARGE',
-                        avgPrice: winSum / winCount
-                    });
-                    winType = null;
-                    winSum = 0;
-                    winCount = 0;
+                // We are in neutral zone
+                if (activeType !== null) {
+                    // Close current window
+                    if (activeStart && activeEnd && activeType) {
+                        windows.push({
+                            startTime: activeStart,
+                            endTime: activeEnd,
+                            type: activeType,
+                            avgPrice: activeSum / activeCount
+                        });
+                    }
+                    activeType = null;
+                    activeStart = null;
+                    activeEnd = null;
+                    activeSum = 0;
+                    activeCount = 0;
                 }
             }
         }
 
-        if (winType !== null) {
+        // Close any remaining window at end of day
+        if (activeType !== null && activeStart && activeEnd) {
             windows.push({
-                startTime: winStart,
-                endTime: winEnd,
-                type: winType as 'CHARGE' | 'DISCHARGE',
-                avgPrice: winSum / winCount
+                startTime: activeStart,
+                endTime: activeEnd,
+                type: activeType,
+                avgPrice: activeSum / activeCount
             });
         }
 
@@ -200,6 +213,7 @@ export const runSimulation = (
         const dataLength = data.length;
 
         // --- REBALANCED MODEL SCORING ---
+        // Adjusted to prevent LSTM from winning every time.
         const modelPenalties: Record<string, number> = {};
         const baseError = 0.04; 
 
@@ -208,36 +222,40 @@ export const runSimulation = (
 
             switch (model.name) {
                 case 'SARIMAX':
-                    if (volatility < 0.15) penalty -= 0.01; 
-                    if (trendStrength < 0.05) penalty -= 0.005;
+                    if (volatility < 0.15) penalty -= 0.015; // Boost for low volatility
+                    if (trendStrength < 0.05) penalty -= 0.008;
                     break;
 
                 case 'Random Forest':
-                    if (volatility > 0.25) penalty -= 0.01;
-                    if (dataLength > 1000) penalty -= 0.005;
+                    if (volatility > 0.25) penalty -= 0.012; // Better at high noise
+                    if (dataLength > 1000) penalty -= 0.008;
                     break;
 
                 case 'XGBoost':
-                    if (trendStrength > 0.05) penalty -= 0.01;
-                    penalty -= 0.002;
+                    if (trendStrength > 0.05) penalty -= 0.012;
+                    penalty -= 0.005; // General slight boost
                     break;
 
                 case 'LightGBM':
-                    if (dataLength > 2000) penalty -= 0.01;
+                    if (dataLength > 2000) penalty -= 0.015; // Wins on very large data
                     break;
 
                 case 'CatBoost':
-                    if (volatility > 0.3) penalty -= 0.01;
+                    if (volatility > 0.3) penalty -= 0.015;
                     break;
 
                 case 'LSTM':
-                    if (dataLength > 5000) penalty -= 0.015;
+                    // Reduced LSTM advantage significantly
+                    if (dataLength > 5000) penalty -= 0.01; 
                     if (volatility > 0.2) penalty -= 0.005;
-                    if (dataLength < 500) penalty += 0.02;
+                    if (dataLength < 800) penalty += 0.025; // Higher penalty for small data
+                    if (trendStrength < 0.02) penalty += 0.005; // Penalize if no trend
                     break;
             }
 
-            const staticJitter = (rng() - 0.5) * 0.04; 
+            // Increased Random Jitter to 6% to ensure variety in winners
+            const staticJitter = (rng() - 0.5) * 0.06; 
+            
             modelPenalties[model.name] = Math.max(0.005, penalty + staticJitter);
         });
 
