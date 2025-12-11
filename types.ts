@@ -1,3 +1,4 @@
+
 export interface IEXDataPoint {
     date: string; // Original string "DD-MM-YYYY"
     dateObj: Date;
@@ -49,6 +50,15 @@ export interface ArbitrageDay {
     dischargeThreshold: number;
 }
 
+export interface FutureForecast {
+    date: Date;
+    dateStr: string;
+    timeBlock: string;
+    price: number;
+    upperBound: number;
+    lowerBound: number;
+}
+
 export interface SimulationResult {
     processedData: IEXDataPoint[];
     modelResults: Record<string, PredictionResult>;
@@ -62,17 +72,30 @@ export interface SimulationResult {
     };
 }
 
-export interface FutureForecast {
-    date: Date;
-    dateStr: string;
-    timeBlock: string;
-    price: number;
-    upperBound: number;
-    lowerBound: number;
-}
-
 export interface ConfigState {
     plotInterval: number;
     forecastDays: number;
     confidenceLevel: number;
+}
+
+export interface BessConfig {
+    capacityMW: number;
+    durationHours: number; // e.g. 2 hours, 4 hours
+    cyclesPerDay: number;
+    efficiency: number; // 0.85 to 0.95
+    depthOfDischarge: number; // 0.8 to 1.0
+    degradationRate: number; // % per year
+    capexPerKWh: number; // Cost in INR
+    opexPerMWh: number; // Cost in INR
+}
+
+export interface FinancialMetrics {
+    dailyRevenue: number;
+    weeklyRevenue: number;
+    annualRevenue: number;
+    annualOpex: number;
+    netProfit: number;
+    roi: number;
+    paybackPeriod: number;
+    npv: number;
 }

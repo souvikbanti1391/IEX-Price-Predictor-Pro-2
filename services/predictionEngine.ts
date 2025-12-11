@@ -1,3 +1,4 @@
+
 import { IEXDataPoint, PredictionResult, SimulationResult, FutureForecast, ArbitrageDay, ArbitrageWindow } from '../types';
 
 const MODELS = [
@@ -10,7 +11,6 @@ const MODELS = [
 ];
 
 // Seeded Random Number Generator (Mulberry32)
-// Ensures deterministic results for the same dataset
 const createRNG = (seed: number) => {
     return function() {
       var t = seed += 0x6D2B79F5;
@@ -23,10 +23,6 @@ const createRNG = (seed: number) => {
 // Generate a unique seed signature from the dataset
 const generateDatasetSignature = (data: IEXDataPoint[]): number => {
     if (data.length === 0) return Date.now();
-    
-    // Create a string signature based on critical data points
-    // Using length, start/end dates, and select price points ensures 
-    // any change in data changes the seed, but same data = same seed.
     const signature = [
         data.length,
         data[0].date,
@@ -40,7 +36,7 @@ const generateDatasetSignature = (data: IEXDataPoint[]): number => {
     for (let i = 0; i < signature.length; i++) {
         const char = signature.charCodeAt(i);
         hash = ((hash << 5) - hash) + char;
-        hash = hash & hash; // Convert to 32bit integer
+        hash = hash & hash;
     }
     return Math.abs(hash);
 };
@@ -55,26 +51,21 @@ const calculateStdDev = (data: number[]) => {
 const calculateArbitrageOpportunities = (forecasts: FutureForecast[]): ArbitrageDay[] => {
     const groupedByDay: Record<string, FutureForecast[]> = {};
     
-    // Group forecasts by day
     forecasts.forEach(f => {
-        if (!groupedByDay[f.dateStr]) {
-            groupedByDay[f.dateStr] = [];
-        }
+        if (!groupedByDay[f.dateStr]) groupedByDay[f.dateStr] = [];
         groupedByDay[f.dateStr].push(f);
     });
 
     const arbitrageDays: ArbitrageDay[] = [];
 
-    // Use for...of loop to avoid closure issues
     for (const [dateStr, dayForecasts] of Object.entries(groupedByDay)) {
-        // Sort by price to find percentiles
         const sortedPrices = [...dayForecasts].sort((a, b) => a.price - b.price);
         const prices = sortedPrices.map(f => f.price);
         
         const minPrice = prices[0];
         const maxPrice = prices[prices.length - 1];
         
-        // Thresholds: Bottom 10% for charging, Top 10% for discharging
+        // Naive 10/90 Strategy
         const p10Index = Math.floor(prices.length * 0.1);
         const p90Index = Math.floor(prices.length * 0.9);
         
@@ -83,7 +74,7 @@ const calculateArbitrageOpportunities = (forecasts: FutureForecast[]): Arbitrage
 
         const windows: ArbitrageWindow[] = [];
         
-        // Primitive State Variables (Avoids Object|Null TS issues)
+        // Primitive State Variables
         let winStart: string = "";
         let winEnd: string = "";
         let winType: 'CHARGE' | 'DISCHARGE' | null = null;
@@ -98,7 +89,6 @@ const calculateArbitrageOpportunities = (forecasts: FutureForecast[]): Arbitrage
 
             if (currentType !== null) {
                 if (winType === null) {
-                    // Start new window
                     winStart = f.timeBlock;
                     winEnd = f.timeBlock;
                     winType = currentType;
@@ -106,12 +96,10 @@ const calculateArbitrageOpportunities = (forecasts: FutureForecast[]): Arbitrage
                     winCount = 1;
                 } else {
                     if (winType === currentType) {
-                        // Extend current window
                         winEnd = f.timeBlock;
                         winSum += f.price;
                         winCount += 1;
                     } else {
-                        // Close current, start new
                         windows.push({
                             startTime: winStart,
                             endTime: winEnd,
@@ -128,7 +116,6 @@ const calculateArbitrageOpportunities = (forecasts: FutureForecast[]): Arbitrage
                 }
             } else {
                 if (winType !== null) {
-                    // Close window if we exit the threshold zone
                     windows.push({
                         startTime: winStart,
                         endTime: winEnd,
@@ -142,7 +129,6 @@ const calculateArbitrageOpportunities = (forecasts: FutureForecast[]): Arbitrage
             }
         }
 
-        // Close any trailing window at the end of the day
         if (winType !== null) {
             windows.push({
                 startTime: winStart,
@@ -166,7 +152,6 @@ const calculateArbitrageOpportunities = (forecasts: FutureForecast[]): Arbitrage
 };
 
 export const exportForecastsToCSV = (forecasts: FutureForecast[], modelName: string) => {
-    // CSV Header
     const headers = ['Date', 'Time Block', 'Predicted Price (Rs/kWh)', 'Lower Bound', 'Upper Bound', 'Model'];
     const rows = forecasts.map(f => [
         f.dateStr,
@@ -177,11 +162,7 @@ export const exportForecastsToCSV = (forecasts: FutureForecast[], modelName: str
         modelName
     ]);
 
-    const csvContent = [
-        headers.join(','),
-        ...rows.map(row => row.join(','))
-    ].join('\n');
-
+    const csvContent = [headers.join(','), ...rows.map(row => row.join(','))].join('\n');
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     const url = URL.createObjectURL(blob);
@@ -199,19 +180,14 @@ export const runSimulation = (
     confidenceLevel: number
 ): Promise<SimulationResult> => {
     return new Promise((resolve) => {
-        // 1. Initialize Deterministic RNG
         const seed = generateDatasetSignature(data);
         const rng = createRNG(seed);
 
-        // 2. Analyze Dataset Characteristics
         const prices = data.map(d => d.mcpKWh);
         const meanPrice = prices.reduce((a, b) => a + b, 0) / (prices.length || 1);
         const stdDev = calculateStdDev(prices);
-        
-        // Coefficient of Variation (Volatility Metric)
         const volatility = meanPrice === 0 ? 0 : stdDev / meanPrice;
         
-        // Trend detection
         const n = prices.length;
         const xSum = n * (n - 1) / 2;
         const ySum = prices.reduce((a, b) => a + b, 0);
@@ -219,78 +195,58 @@ export const runSimulation = (
         const xSquaredSum = (n * (n - 1) * (2 * n - 1)) / 6;
         const slope = (n * xySum - xSum * ySum) / (n * xSquaredSum - xSum * xSum || 1);
         const trendStrength = Math.abs(slope) * 1000;
-
         const dataLength = data.length;
 
-        // 3. Score Models Deterministically
-        // Base penalty is the expected error rate (e.g., 0.05 = 5% MAPE)
+        // --- REBALANCED MODEL SCORING ---
+        // Removed heavy LSTM bias. Models now start closer together.
+        // Random jitter increased to allow different winners based on seed.
+        
         const modelPenalties: Record<string, number> = {};
-        const baseError = 0.045; // Slightly tighter base error
+        const baseError = 0.04; 
 
         MODELS.forEach(model => {
             let penalty = baseError;
 
-            // Apply logic based on data characteristics
-            // REBALANCED LOGIC to prevent "Random Forest" dominance
             switch (model.name) {
                 case 'SARIMAX':
-                    // Excellent for stable data, struggles with chaos
-                    if (volatility < 0.18) penalty -= 0.015; 
-                    else if (volatility > 0.30) penalty += 0.02;
-                    
-                    // Good for typical short-term datasets
-                    if (dataLength < 2000) penalty -= 0.005;
+                    if (volatility < 0.15) penalty -= 0.01; 
+                    if (trendStrength < 0.05) penalty -= 0.005;
                     break;
 
                 case 'Random Forest':
-                    // Good all-rounder, but previously was too overpowered
-                    // Now requires higher volatility to really shine
-                    if (volatility > 0.35) penalty -= 0.02; 
-                    else if (volatility > 0.20) penalty -= 0.005;
-                    
-                    // Penalty if trend is very strong (trees struggle with extrapolation)
-                    if (trendStrength > 0.1) penalty += 0.01;
+                    // Performs well on high noise
+                    if (volatility > 0.25) penalty -= 0.01;
+                    if (dataLength > 1000) penalty -= 0.005;
                     break;
 
                 case 'XGBoost':
-                    // Boosted trees handle trends better than RF
-                    if (trendStrength > 0.02) penalty -= 0.015;
-                    
-                    // General high performance bonus
-                    penalty -= 0.005;
+                    if (trendStrength > 0.05) penalty -= 0.01;
+                    penalty -= 0.002; // General small bonus
                     break;
 
                 case 'LightGBM':
-                    // Fast, good for larger datasets
-                    if (dataLength > 1500) penalty -= 0.015;
-                    else if (dataLength < 300) penalty += 0.01;
+                    if (dataLength > 2000) penalty -= 0.01;
                     break;
 
                 case 'CatBoost':
-                    // Handles seasonality well
-                    if (dataLength > 350) penalty -= 0.01;
+                    if (volatility > 0.3) penalty -= 0.01;
                     break;
 
                 case 'LSTM':
-                    // Deep learning: Needs LOTS of data
-                    if (dataLength < 600) {
-                        penalty += 0.04; // Heavy penalty for small data
-                    } else if (dataLength > 3000) {
-                        penalty -= 0.03; // Strong bonus for big data
-                    }
-                    
-                    // Handles non-linear volatility well
-                    if (volatility > 0.25) penalty -= 0.01;
+                    // Significantly reduced the "Big Data" bonus to prevent constant winning
+                    if (dataLength > 5000) penalty -= 0.015; // Was -0.03
+                    if (volatility > 0.2) penalty -= 0.005;
+                    // Penalty for small datasets remains
+                    if (dataLength < 500) penalty += 0.02;
                     break;
             }
 
-            // Expanded Jitter Range
-            const staticJitter = (rng() - 0.5) * 0.015; 
+            // Increased Jitter Range (-0.02 to +0.02) to randomize winner more effectively
+            const staticJitter = (rng() - 0.5) * 0.04; 
             
             modelPenalties[model.name] = Math.max(0.005, penalty + staticJitter);
         });
 
-        // 4. Generate Predictions
         const modelResults: Record<string, PredictionResult> = {};
 
         MODELS.forEach(model => {
@@ -298,29 +254,18 @@ export const runSimulation = (
             const predictions: number[] = [];
             const errors: number[] = [];
             
-            // For Directional Accuracy
             let correctDirection = 0;
             let totalDirectionChecks = 0;
 
-            // Create a specific RNG stream for this model + dataset combination
             const modelSeed = seed + model.name.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
             const modelRng = createRNG(modelSeed);
 
             data.forEach((point, i) => {
-                // Time-dependent structural difficulty
                 let difficultyMultiplier = 1;
+                if (point.hour >= 18 && point.hour <= 22) difficultyMultiplier = 1.25;
+                if (point.hour >= 7 && point.hour <= 10) difficultyMultiplier = 1.1;
                 
-                // Peak hours are harder to predict
-                if (point.hour >= 18 && point.hour <= 22) difficultyMultiplier = 1.3;
-                if (point.hour >= 7 && point.hour <= 10) difficultyMultiplier = 1.15;
-                
-                // Weekend transitions can be tricky
-                if (point.dayOfWeek === 1 && point.hour < 6) difficultyMultiplier = 1.2;
-
-                // Deterministic noise: -1 to 1
                 const noise = (modelRng() - 0.5) * 2;
-                
-                // Calculate simulated error
                 const relativeError = penalty * difficultyMultiplier * noise;
                 const predictionError = point.mcpKWh * relativeError;
                 
@@ -328,11 +273,9 @@ export const runSimulation = (
                 predictions.push(pred);
                 errors.push(Math.abs(point.mcpKWh - pred));
 
-                // Calculate Directional Accuracy
                 if (i > 0) {
                     const prevActual = data[i-1].mcpKWh;
                     const currActual = point.mcpKWh;
-                    
                     const actualDiff = currActual - prevActual;
                     const predDiff = pred - prevActual;
                     
@@ -343,7 +286,6 @@ export const runSimulation = (
                 }
             });
 
-            // Calculate Metrics
             const mse = errors.reduce((sum, e) => sum + e * e, 0) / errors.length;
             const rmse = Math.sqrt(mse);
             const mae = errors.reduce((sum, e) => sum + e, 0) / errors.length;
@@ -369,7 +311,6 @@ export const runSimulation = (
             };
         });
 
-        // 5. Identify Winner
         let bestModel = 'SARIMAX';
         let minRMSE = Infinity;
         
@@ -380,16 +321,11 @@ export const runSimulation = (
             }
         });
 
-        // 6. Generate Future Forecasts
         const forecasts: FutureForecast[] = [];
         const lastDate = data[data.length - 1].dateObj;
-        
-        // Z-scores: 90%->1.645, 95%->1.96, 99%->2.576
         const zScore = confidenceLevel === 90 ? 1.645 : confidenceLevel === 99 ? 2.576 : 1.96;
-        
-        // Use best model's penalty for forecast variance
         const winnerMetrics = modelResults[bestModel].metrics;
-        const forecastRng = createRNG(seed + 9999); // Separate stream for forecast
+        const forecastRng = createRNG(seed + 9999); 
 
         for (let d = 1; d <= forecastDays; d++) {
             const currentDate = new Date(lastDate);
@@ -399,21 +335,15 @@ export const runSimulation = (
             for (let h = 0; h < 24; h++) {
                 for (let m = 0; m < 60; m += 15) {
                     let basePrice = meanPrice;
+                    if (h >= 6 && h < 10) basePrice *= 1.25; 
+                    else if (h >= 18 && h < 22) basePrice *= 1.4; 
+                    else if (h < 6) basePrice *= 0.75; 
 
-                    // Seasonality (Hourly)
-                    if (h >= 6 && h < 10) basePrice *= 1.25; // Morning
-                    else if (h >= 18 && h < 22) basePrice *= 1.4; // Evening
-                    else if (h < 6) basePrice *= 0.75; // Night
-
-                    // Trend application
                     basePrice += slope * (dataLength + forecasts.length);
-
-                    // Weekly Seasonality
                     if (isWeekend) basePrice *= 0.92;
 
-                    // Add simulated forecast noise
-                    const uncertaintyGrowth = 1 + (d * 0.05); // 5% more uncertain each day
-                    const randomVar = (forecastRng() - 0.5) * 0.1 * uncertaintyGrowth;
+                    const uncertaintyGrowth = 1 + (d * 0.05); 
+                    const randomVar = (forecastRng() - 0.5) * 0.12 * uncertaintyGrowth;
                     
                     let predictedPrice = basePrice * (1 + randomVar);
                     predictedPrice = Math.max(0, predictedPrice);
@@ -432,7 +362,6 @@ export const runSimulation = (
             }
         }
         
-        // 7. Calculate Arbitrage Opportunities
         const arbitrageData = calculateArbitrageOpportunities(forecasts);
 
         resolve({
